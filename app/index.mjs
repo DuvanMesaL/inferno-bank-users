@@ -27,6 +27,7 @@ async function getSecrets() {
   return cachedSecrets;
 }
 
+
 function ok(statusCode, data) {
   return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) };
 }
