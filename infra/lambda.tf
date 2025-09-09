@@ -12,12 +12,14 @@ resource "aws_lambda_function" "register" {
 
   environment {
     variables = {
-      USER_TABLE             = aws_dynamodb_table.users.name
-      AVATARS_BUCKET         = aws_s3_bucket.avatars.bucket
-      USERS_SECRET_NAME      = aws_secretsmanager_secret.users_secret.name
-      CARD_REQUEST_QUEUE_URL = aws_sqs_queue.card_requests.url
-      JWT_TTL                = var.jwt_ttl_seconds
-      DEBUG_ERRORS           = "0"
+      USER_TABLE                          = aws_dynamodb_table.users.name
+      AVATARS_BUCKET                      = aws_s3_bucket.avatars.bucket
+      USERS_SECRET_NAME                   = aws_secretsmanager_secret.users_secret.name
+      CARD_REQUEST_QUEUE_URL              = aws_sqs_queue.card_requests.url
+      JWT_TTL                             = var.jwt_ttl_seconds
+      DEBUG_ERRORS                        = "0"
+      NOTIFICATIONS_QUEUE_URL             = data.aws_sqs_queue.notifications_events.url
+      AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
     }
   }
 

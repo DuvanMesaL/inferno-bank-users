@@ -45,6 +45,14 @@ data "aws_iam_policy_document" "lambda_inline" {
     actions   = ["sqs:SendMessage"]
     resources = [aws_sqs_queue.card_requests.arn]
   }
+
+  statement {
+    sid       = "SQSSendNotifications"
+    actions   = ["sqs:SendMessage"]
+    resources = [data.aws_sqs_queue.notifications_events.arn]
+  }
+
+
 }
 
 resource "aws_iam_role_policy" "lambda_inline" {

@@ -14,6 +14,9 @@ const QUEUE_URL = process.env.CARD_REQUEST_QUEUE_URL;
 const SECRET_NAME = process.env.USERS_SECRET_NAME;
 const JWT_TTL = Number(process.env.JWT_TTL || "3600");
 
+// NUEVO: cola de notificaciones
+const NOTIFICATIONS_QUEUE_URL = process.env.NOTIFICATIONS_QUEUE_URL;
+
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
 const s3 = new S3Client({ region });
 const sqs = new SQSClient({ region });
@@ -27,7 +30,6 @@ async function getSecrets() {
   return cachedSecrets;
 }
 
-
 function ok(statusCode, data) {
   return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) };
 }
@@ -39,7 +41,6 @@ function parseBody(evt) {
 }
 
 function toDebug(err) {
-  // Normaliza error del SDK (ClientError), DynamoDB, etc.
   const code = err?.name || err?.Code || err?.__type || "UnknownError";
   const msg  = err?.message || String(err);
   const meta = err?.$metadata || {};
@@ -54,6 +55,26 @@ function reply(statusCode, payload, err) {
     base._debug = d;
   }
   return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(base) };
+}
+
+// ====== NUEVO: helper de notificaciones ======
+async function publishNotification({ userId, type, message, extra = {} }) {
+  try {
+    if (!NOTIFICATIONS_QUEUE_URL) {
+      console.warn("[NOTIF|USERS] NOTIFICATIONS_QUEUE_URL not set, skipping");
+      return;
+    }
+    const payload = { userId, type, message, ...extra };
+    const body = JSON.stringify(payload);
+    console.log("[NOTIF|USERS] Publish →", body);
+    const out = await sqs.send(new SendMessageCommand({
+      QueueUrl: NOTIFICATIONS_QUEUE_URL,
+      MessageBody: body,
+    }));
+    console.log("[NOTIF|USERS] SQS OK", out?.MessageId);
+  } catch (e) {
+    console.error("[NOTIF|USERS] publish error", e);
+  }
 }
 
 // POST /register
@@ -113,7 +134,7 @@ export const register = async (evt) => {
       return reply(500, { ok:false, where:"dynamoPut", error:"No se pudo guardar el usuario" }, e);
     }
 
-    // 4) Enviar 2 mensajes a SQS (no bloquea el registro)
+    // 4) Enviar 2 mensajes a SQS (card requests) – no bloquea
     try {
       const types = ["DEBIT", "CREDIT"];
       for (const type of types) {
@@ -126,6 +147,13 @@ export const register = async (evt) => {
       console.error("step=sqsSend (non-blocking)", e);
       warnings.push({ where:"sqsSend", hint:"No bloquea el registro", ...toDebug(e) });
     }
+
+    // 5) NUEVO: notificación USER_CREATED
+    await publishNotification({
+      userId: id,
+      type: "USER_CREATED",
+      message: `User ${item.email} created`,
+    });
 
     const { password, ...publicUser } = item;
     return reply(201, { ok:true, user: publicUser, warnings: warnings.length ? warnings : undefined });
@@ -143,7 +171,7 @@ export const login = async (evt) => {
     if (!body.email || !body.password) return bad(400, "Falta email o password");
     const email = String(body.email).toLowerCase();
 
-    // No tenemos índice por email, usamos Scan (sirve para la entrega)
+    // Nota: Scan para demo (no hay GSI por email)
     const scan = await ddb.send(new ScanCommand({
       TableName: TABLE,
       FilterExpression: "#e = :e AND #doc = :p",
@@ -205,6 +233,14 @@ export const updateProfile = async (evt) => {
       ReturnValues: "ALL_NEW"
     }));
     const { password, ...publicUser } = res.Attributes || {};
+
+    // NUEVO: notificación de update
+    await publishNotification({
+      userId,
+      type: "USER_PROFILE_UPDATED",
+      message: "Profile updated",
+    });
+
     return ok(200, { ok: true, user: publicUser });
   } catch (e) {
     console.error("update profile error", e);
@@ -234,6 +270,15 @@ export const uploadAvatar = async (evt) => {
       ReturnValues: "ALL_NEW"
     }));
     const { password, ...publicUser } = res.Attributes || {};
+
+    // NUEVO: notificación de avatar
+    await publishNotification({
+      userId,
+      type: "USER_AVATAR_UPLOADED",
+      message: "Avatar uploaded",
+      extra: { avatarKey: key }
+    });
+
     return ok(200, { ok: true, user: publicUser, avatarKey: key });
   } catch (e) {
     console.error("upload avatar error", e);
